@@ -53,3 +53,6 @@ bids_data
 
 # LM
 wikitext-103-raw*
+
+# wandb
+wandb/

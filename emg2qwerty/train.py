@@ -22,6 +22,7 @@ from emg2qwerty.transforms import Transform
 
 log = logging.getLogger(__name__)
 
+from pytorch_lightning.loggers import WandbLogger
 
 @hydra.main(version_base=None, config_path="../config", config_name="base")
 def main(config: DictConfig):
@@ -90,10 +91,27 @@ def main(config: DictConfig):
     callback_configs = config.get("callbacks", [])
     callbacks = [instantiate(cfg) for cfg in callback_configs]
 
+    wandb_cfg = config.get("wandb", None)
+    wandb_logger = None
+    if wandb_cfg is not None and wandb_cfg.get("enabled", True):
+        wandb_logger = WandbLogger(
+            project=wandb_cfg.get("project", "emg2qwerty"),
+            entity=wandb_cfg.get("entity", None),
+            name=wandb_cfg.get("name", None),
+            tags=wandb_cfg.get("tags", None),
+            notes=wandb_cfg.get("notes", None),
+            group=wandb_cfg.get("group", None),
+            job_type=wandb_cfg.get("job_type", None),
+            save_dir=str(Path.cwd()),
+            config=OmegaConf.to_container(config, resolve=True),
+            log_model=wandb_cfg.get("log_model", "all"),  # IMPORTANT
+        )
+
     # Initialize trainer
     trainer = pl.Trainer(
         **config.trainer,
         callbacks=callbacks,
+        logger=wandb_logger,
     )
 
     if config.train:
@@ -123,6 +141,9 @@ def main(config: DictConfig):
     }
     pprint.pprint(results, sort_dicts=False)
 
+    if wandb_logger is not None:
+        import wandb
+        wandb.finish()
 
 if __name__ == "__main__":
     OmegaConf.register_new_resolver("cpus_per_task", utils.cpus_per_task)

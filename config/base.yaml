@@ -2,7 +2,7 @@ defaults:
   - user: single_user
   - transforms: log_spectrogram
   - model: tds_conv_ctc
-  - optimizer: adam
+  - optimizer: adamw
   - lr_scheduler: linear_warmup_cosine_annealing
   - decoder: ctc_greedy
   - cluster: local
@@ -50,3 +50,10 @@ hydra:
           - checkpoint
           - cluster
           - trainer.accelerator
+
+wandb:
+  enabled: true
+  project: emg2qwerty
+  entity: null
+  name: null
+  log_model: all
