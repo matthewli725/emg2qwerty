@@ -40,7 +40,7 @@ def main(config: DictConfig):
     # Additionally, this auto-adds a worker_init_fn to train_dataloader that
     # initializes the seed taking worker_id into account per dataloading worker
     # (see `pl_worker_init_fn()`).
-    pl.seed_everything(config.seed, workers=True)
+    
 
     # Helper to instantiate full paths for dataset sessions
     def _full_session_paths(dataset: ListConfig) -> list[Path]:

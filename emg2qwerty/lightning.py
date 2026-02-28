@@ -150,6 +150,7 @@ class TDSConvCTCModule(pl.LightningModule):
         optimizer: DictConfig,
         lr_scheduler: DictConfig,
         decoder: DictConfig,
+        channel_mask: DictConfig,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -161,6 +162,7 @@ class TDSConvCTCModule(pl.LightningModule):
         self.model = nn.Sequential(
             # (T, N, bands=2, C=16, freq)
             SpectrogramNorm(channels=self.NUM_BANDS * self.ELECTRODE_CHANNELS),
+            *( [instantiate(channel_mask)] if channel_mask is not None else [] ),
             # (T, N, bands=2, mlp_features[-1])
             MultiBandRotationInvariantMLP(
                 in_features=in_features,

@@ -1,0 +1,16 @@
+# @package _global_
+defaults:
+  - override /model: tds_conv_ctc
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    max_batch_size: 1
+    params:
+      module.channel_mask.drop_prob: 0.25, 0.50, 0.75
+      module.channel_mask.mode: gaussian
+      module.channel_mask.gaussian_std: 1.0
+
+wandb:
+  group: channelmask_sweep_v1
+  name: "drop{module.channel_mask.drop_prob}_{module.channel_mask.mode}"

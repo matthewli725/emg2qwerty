@@ -8,6 +8,122 @@ from collections.abc import Sequence
 
 import torch
 from torch import nn
+import torch
+import torch.nn as nn
+from typing import Sequence, Optional
+
+class ChannelMask(nn.Module):
+    """Masks entire electrode channels after normalization.
+
+    Expects inputs of shape (T, N, bands, C, freq).
+
+    Modes:
+      - Stochastic: sample a new Bernoulli keep-mask every forward pass (fixed=False).
+      - Deterministic: create one fixed keep-mask and reuse it (fixed=True).
+
+    Deterministic mask can be specified by:
+      - drop_indices: list of flattened (band, channel) indices to drop, OR
+      - keep_indices: list of flattened (band, channel) indices to keep, OR
+      - seed + drop_prob: randomly choose a fixed subset to drop once.
+    """
+
+    def __init__(
+        self,
+        drop_prob: float = 0.0,
+        mode: str = "zero",
+        gaussian_std: float = 1.0,
+        per_example: bool = False,          # deterministic typically wants shared mask
+        active_in_eval: bool = False,
+        fixed: bool = False,
+        seed: Optional[int] = None,
+        drop_indices: Optional[Sequence[int]] = None,
+        keep_indices: Optional[Sequence[int]] = None,
+    ) -> None:
+        super().__init__()
+        if not (0.0 <= drop_prob <= 1.0):
+            raise ValueError(f"drop_prob must be in [0, 1], got {drop_prob}")
+        if mode not in {"zero", "gaussian"}:
+            raise ValueError(f"mode must be 'zero' or 'gaussian', got {mode}")
+        if drop_indices is not None and keep_indices is not None:
+            raise ValueError("Specify only one of drop_indices or keep_indices.")
+        if fixed and drop_prob == 0.0 and drop_indices is None and keep_indices is None:
+            # fixed True but nothing to do; allowed, but pointless
+            pass
+
+        self.drop_prob = float(drop_prob)
+        self.mode = mode
+        self.gaussian_std = float(gaussian_std)
+        self.per_example = bool(per_example)
+        self.active_in_eval = bool(active_in_eval)
+
+        self.fixed = bool(fixed)
+        self.seed = seed
+        self.drop_indices = list(drop_indices) if drop_indices is not None else None
+        self.keep_indices = list(keep_indices) if keep_indices is not None else None
+
+        # Will be created lazily on first forward when we know (bands, C).
+        self.register_buffer("fixed_keep_mask", None, persistent=False)
+
+    def _build_fixed_keep_mask(self, bands: int, C: int, device, dtype) -> torch.Tensor:
+        total = bands * C
+        keep = torch.ones((bands, C), device=device, dtype=dtype)
+
+        if self.drop_indices is not None:
+            idx = torch.tensor(self.drop_indices, device=device)
+            if (idx.min() < 0) or (idx.max() >= total):
+                raise ValueError(f"drop_indices must be in [0, {total-1}]")
+            keep.view(-1)[idx] = 0
+
+        elif self.keep_indices is not None:
+            idx = torch.tensor(self.keep_indices, device=device)
+            if (idx.min() < 0) or (idx.max() >= total):
+                raise ValueError(f"keep_indices must be in [0, {total-1}]")
+            keep.zero_()
+            keep.view(-1)[idx] = 1
+
+        else:
+            # Choose exactly round(drop_prob * total) channels to drop, deterministically.
+            num_drop = int(round(self.drop_prob * total))
+            perm = torch.randperm(total)  # on CPU
+            drop = perm[:num_drop]
+            keep.view(-1)[drop.to(device=device)] = 0
+
+        return keep  # shape (bands, C)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        if self.drop_prob == 0.0 and self.drop_indices is None and self.keep_indices is None:
+            return inputs
+        if (not self.training) and (not self.active_in_eval):
+            return inputs
+
+        # inputs: (T, N, bands, C, freq)
+        T, N, bands, C, freq = inputs.shape
+
+        if self.fixed:
+            if self.fixed_keep_mask is None or self.fixed_keep_mask.shape != (bands, C):
+                self.fixed_keep_mask = self._build_fixed_keep_mask(
+                    bands=bands, C=C, device=inputs.device, dtype=inputs.dtype
+                )
+            keep_bc = self.fixed_keep_mask  # (bands, C)
+
+            if self.per_example:
+                keep_mask = keep_bc.view(1, 1, bands, C, 1).expand(1, N, bands, C, 1)
+            else:
+                keep_mask = keep_bc.view(1, 1, bands, C, 1)
+        else:
+            # Stochastic per-forward mask
+            keep_prob = 1.0 - self.drop_prob
+            if self.per_example:
+                mask_shape = (1, N, bands, C, 1)
+            else:
+                mask_shape = (1, 1, bands, C, 1)
+            keep_mask = torch.empty(mask_shape, device=inputs.device, dtype=inputs.dtype).bernoulli_(keep_prob)
+
+        if self.mode == "zero":
+            return inputs * keep_mask
+
+        noise = torch.randn_like(inputs) * self.gaussian_std
+        return inputs * keep_mask + noise * (1.0 - keep_mask)
 
 
 class SpectrogramNorm(nn.Module):
