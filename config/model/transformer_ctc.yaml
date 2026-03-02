@@ -1,0 +1,28 @@
+# @package _global_
+module:
+  _target_: emg2qwerty.lightning.TransformerCTCModule
+
+  # front-end
+  in_features: 528          # (n_fft // 2 + 1) * 16
+  mlp_features: [384]       # per-band MLP output; total features = NUM_BANDS * 384 = 768 if NUM_BANDS=2
+
+  # kept for signature compatibility; not used by TransformerCTCModule unless you choose to
+  # block_channels: [24, 24, 24, 24]
+  # kernel_width: 32
+
+  # transformer hyperparams (match your hardcoded defaults unless you wire them into __init__)
+  num_layers: 4
+  nhead: 8
+  dim_feedforward: 1536
+  dropout: 0.1
+  max_len: 4096
+  norm_first: true
+
+  optimizer: ${optimizer}
+  lr_scheduler: ${lr_scheduler}
+  decoder: ${decoder}
+
+datamodule:
+  _target_: emg2qwerty.lightning.WindowedEMGDataModule
+  window_length: 8000       # 4 sec windows @ 2kHz
+  padding: [1800, 200]      # 900ms past, 100ms future (at 2kHz)

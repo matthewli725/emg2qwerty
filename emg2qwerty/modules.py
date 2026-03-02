@@ -145,7 +145,6 @@ class MultiBandRotationInvariantMLP(nn.Module):
         super().__init__()
         self.num_bands = num_bands
         self.stack_dim = stack_dim
-
         # One MLP per band
         self.mlps = nn.ModuleList(
             [
@@ -161,7 +160,6 @@ class MultiBandRotationInvariantMLP(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         assert inputs.shape[self.stack_dim] == self.num_bands
-
         inputs_per_band = inputs.unbind(self.stack_dim)
         outputs_per_band = [
             mlp(_input) for mlp, _input in zip(self.mlps, inputs_per_band)
@@ -278,3 +276,104 @@ class TDSConvEncoder(nn.Module):
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         return self.tds_conv_blocks(inputs)  # (T, N, num_features)
+
+
+import math
+from typing import Optional, Sequence
+
+import torch
+from torch import nn
+
+
+class SinusoidalPositionalEncoding(nn.Module):
+    """
+    Absolute (sinusoidal) positional encoding as in Vaswani et al.
+
+    Expects x shaped (T, N, D). Adds PE[T, 1, D] to x.
+    """
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 4096) -> None:
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        pe = torch.zeros(max_len, d_model)  # (T, D)
+        position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)  # (T, 1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000.0) / d_model)
+        )  # (D/2,)
+
+        pe[:, 0::2] = torch.sin(position * div_term)  # even dims
+        pe[:, 1::2] = torch.cos(position * div_term)  # odd dims
+        pe = pe.unsqueeze(1)  # (T, 1, D)
+
+        # Register as buffer so it moves with .to(device), saved in state_dict, no grads
+        self.register_buffer("pe", pe, persistent=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (T, N, D)
+        """
+        T = x.size(0)
+        if T > self.pe.size(0):
+            raise ValueError(f"Sequence length {T} exceeds max_len {self.pe.size(0)}.")
+        x = x + self.pe[:T]  # broadcast over batch N
+        return self.dropout(x)
+
+
+class TransformerStackEncoder(nn.Module):
+    """
+    Vanilla Transformer encoder stack with absolute positional encoding.
+
+    Drop-in replacement for TDSConvEncoder when shapes are:
+      input:  (T, N, num_features)
+      output: (T, N, num_features)
+
+    Notes:
+    - For fixed-length windows you can omit padding masks entirely.
+    - If you later switch to variable-length sequences, pass a
+      src_key_padding_mask shaped (N, T) with True = PAD.
+    """
+    def __init__(
+        self,
+        num_features: int,
+        num_layers: int = 4,
+        nhead: int = 8,
+        dim_feedforward: int = 1536,
+        dropout: float = 0.1,
+        max_len: int = 4096,
+        norm_first: bool = True,
+    ) -> None:
+        super().__init__()
+        if num_features % nhead != 0:
+            raise ValueError(f"num_features ({num_features}) must be divisible by nhead ({nhead}).")
+
+        self.pos_enc = SinusoidalPositionalEncoding(
+            d_model=num_features, dropout=dropout, max_len=max_len
+        )
+
+        enc_layer = nn.TransformerEncoderLayer(
+            d_model=num_features,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=False,   # expects (T, N, D)
+            norm_first=norm_first,
+        )
+        self.encoder = nn.TransformerEncoder(
+            enc_layer,
+            num_layers=num_layers,
+            norm=nn.LayerNorm(num_features),
+        )
+
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        inputs: (T, N, num_features)
+        src_key_padding_mask: optional (N, T) bool, True indicates padding positions.
+        """
+        x = self.pos_enc(inputs)
+        x = self.encoder(x, src_key_padding_mask=src_key_padding_mask)
+        return x  # (T, N, num_features)
