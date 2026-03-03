@@ -92,8 +92,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
                     transform=self.test_transform,
                     # Feed the entire session at once without windowing/padding
                     # at test time for more realism
-                    window_length=None,
-                    padding=(0, 0),
+                    window_length=self.window_length,
+                    padding=(1800, 0),  # Pad only the left side of the sequence to allow for model receptive field "warmup" at the start of the session, but not pad the right side to avoid influencing test scores with excessive padding.
                     jitter=False,
                 )
                 for hdf5_path in self.test_sessions

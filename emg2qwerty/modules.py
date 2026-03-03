@@ -363,8 +363,9 @@ class TransformerStackEncoder(nn.Module):
             enc_layer,
             num_layers=num_layers,
             norm=nn.LayerNorm(num_features),
+            enable_nested_tensor=False,  
         )
-
+        
     def forward(
         self,
         inputs: torch.Tensor,
