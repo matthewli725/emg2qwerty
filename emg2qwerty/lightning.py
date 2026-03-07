@@ -34,6 +34,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
         self,
         window_length: int,
         padding: tuple[int, int],
+        stride: int,
+        jitter: bool,
         batch_size: int,
         num_workers: int,
         train_sessions: Sequence[Path],
@@ -47,6 +49,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
 
         self.window_length = window_length
         self.padding = padding
+        self.stride = stride
+        self.jitter = jitter
 
         self.batch_size = batch_size
         self.num_workers = num_workers
@@ -65,6 +69,8 @@ class WindowedEMGDataModule(pl.LightningDataModule):
                 WindowedEMGDataset(
                     hdf5_path,
                     transform=self.train_transform,
+                    stride=self.stride,
+                    jitter=self.jitter,
                     window_length=self.window_length,
                     padding=self.padding,
                     jitter=True,
