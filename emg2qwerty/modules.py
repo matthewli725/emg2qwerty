@@ -378,3 +378,65 @@ class TransformerStackEncoder(nn.Module):
         x = self.pos_enc(inputs)
         x = self.encoder(x, src_key_padding_mask=src_key_padding_mask)
         return x  # (T, N, num_features)
+
+
+
+import torch
+import torch.nn as nn
+from typing import Optional
+
+
+class TDSLSTMEncoder(nn.Module):
+    """
+    TDS encoder followed by a 2-layer unidirectional LSTM.
+
+    Input:
+        (T, N, num_features)
+    Output:
+        (T, N, num_features)
+
+    This is intended as a drop-in replacement after your TDS blocks and before
+    the final classifier for CTC.
+    """
+
+    def __init__(
+        self,
+        num_features: int,
+        num_lstm_layers: int = 2,
+        lstm_hidden_size: Optional[int] = None,
+        dropout: float = 0.1,
+    ) -> None:
+    
+        super().__init__()
+
+        if lstm_hidden_size is None:
+            lstm_hidden_size = num_features
+
+        self.lstm = nn.GRU(
+            input_size=num_features,
+            hidden_size=lstm_hidden_size,
+            num_layers=num_lstm_layers,
+            dropout=dropout if num_lstm_layers > 1 else 0.0,
+            bidirectional=False,
+            batch_first=False,  # expects (T, N, C)
+        )
+
+        # Project back to num_features if hidden size differs
+        self.proj = (
+            nn.Identity()
+            if lstm_hidden_size == num_features
+            else nn.Linear(lstm_hidden_size, num_features)
+        )
+
+        self.layer_norm = nn.LayerNorm(num_features)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        inputs: (T, N, num_features)
+        returns: (T, N, num_features)
+        """
+        x, _ = self.lstm(inputs)   # (T, N, H)
+        x = self.proj(x)           # (T, N, num_features)
+        x = x + inputs             # residual
+        x = self.layer_norm(x)
+        return x
